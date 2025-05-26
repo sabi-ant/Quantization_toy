@@ -26,11 +26,23 @@ class CustomSeg(nn.Module):
         self.neck = BiFPN(encoder_channels=[32, 64, 160, 400],pyramid_channels=pyramid_channels, num_layers=neck_iter)
         self.head = nn.Sequential(nn.Conv2d(pyramid_channels, pyramid_channels, 3, padding=1), 
                                   nn.BatchNorm2d(pyramid_channels), 
-                                  nn.ReLU(inplace=True), 
-                                  nn.Conv2d(pyramid_channels, num_classes, 1))
+                                  nn.ReLU(inplace=True),
+                                  nn.Conv2d(pyramid_channels, num_classes, 1)
+                                  )
+        self.att_feat_layer = nn.Sequential(
+                                  nn.ReLU(inplace=True),
+                                  nn.Conv2d(num_classes, num_classes, 3,2,1),
+                                  nn.BatchNorm2d(num_classes),
+                                  nn.ReLU(inplace=True))
+        self.attr = nn.Sequential(nn.Linear(44*60, 14))
+    
 
     def forward(self, x):
         features = self.backbone(x) # [p2, p3, p4, p5]
         features = self.neck(features) # [p2]
-        return self.head(features[0])
+        seg_out =  self.head(features[0])
+        att_feat = self.att_feat_layer(seg_out)
+        att_feat = att_feat.flatten(2)
+        attr_out = self.attr(att_feat)
+        return seg_out, attr_out
 
