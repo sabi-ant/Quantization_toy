@@ -6,7 +6,7 @@ import os
 if __name__=="__main__":
 
     hhmmdd_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst_dir = f"{hhmmdd_str}_torchmodelopt_10_01"
+    dst_dir = f"{hhmmdd_str}_torchmodelopt_r9.2"
     model = CustomSeg(num_classes=6, encoder_channels=[32, 64, 160, 400], pyramid_channels=32, neck_iter=3  )
     model = edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule(model, total_epochs=5)
     model.train()
