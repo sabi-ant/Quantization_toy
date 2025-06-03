@@ -6,13 +6,13 @@ import os
 if __name__=="__main__":
 
     hhmmdd_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst_dir = f"{hhmmdd_str}_torchmodelopt_r9.2"
+    dst_dir = f"{hhmmdd_str}_torchmodelopt_r10.01"
     model = CustomSeg(num_classes=6, encoder_channels=[32, 64, 160, 400], pyramid_channels=32, neck_iter=3  )
     model = edgeai_torchmodelopt.xmodelopt.quantization.v2.QATFxModule(model, total_epochs=5)
     model.train()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.00001,weight_decay=0.0002)
     for i in range(5):
-        img = torch.randn((1,3,352,480))
+        img = torch.randn((1,3,288,480))
         seg_out, attr_out = model(img)
         attr_out = attr_out.permute(0,2,1)
         loss = torch.nn.functional.cross_entropy(seg_out, torch.randint(0, 6, (1, 88, 120)))
