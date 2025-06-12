@@ -36,7 +36,7 @@ class CustomSeg(nn.Module):
                                   nn.Conv2d(num_classes, num_classes, 3,2,1),
                                   nn.BatchNorm2d(num_classes),
                                   nn.ReLU(inplace=True))
-        self.attr = nn.Sequential(nn.Linear(44*60, 14))
+        self.attr = nn.Sequential(nn.Linear(36*60, 14))
     
 
     def forward(self, x):

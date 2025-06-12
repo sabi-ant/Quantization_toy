@@ -15,15 +15,16 @@ if __name__=="__main__":
         img = torch.randn((1,3,288,480))
         seg_out, attr_out = model(img)
         attr_out = attr_out.permute(0,2,1)
-        loss = torch.nn.functional.cross_entropy(seg_out, torch.randint(0, 6, (1, 88, 120)))
+        loss = torch.nn.functional.cross_entropy(seg_out, torch.randint(0, 6, (1, 72, 120)))
         attr_loss = torch.nn.functional.cross_entropy(attr_out, torch.randint(0, 14, (1,6)))
         loss += attr_loss
         loss.backward()
         optimizer.step()
+        
     model.eval()
     model = model.convert()
     os.makedirs(dst_dir, exist_ok=True)
-    dummy_input = torch.randn((1,3,352,480))
+    dummy_input = torch.randn((1,3,288,480))
     torch.onnx.export(model, dummy_input, os.path.join(dst_dir,'model.onnx'),
                       input_names=['input'], output_names=['seg_out', 'attr_out'],
                        export_params=True, verbose=False, do_constant_folding=True, opset_version=17)
