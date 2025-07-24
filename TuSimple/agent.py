@@ -10,7 +10,8 @@ from util_hourglass import *
 from copy import deepcopy
 import numpy as np
 from torch.autograd import Variable
-from hourglass_network import lane_detection_network
+# from hourglass_network import lane_detection_network
+from toy_model.light_toy_model import CustomSeg as lane_detection_network
 from torch.autograd import Function as F
 from parameters import Parameters
 import math
@@ -167,7 +168,7 @@ class Agent(nn.Module):
         #util.visualize_gt(ground_truth_point[0], ground_truth_instance[0], inputs[0])
 
         # update lane_detection_network
-        result, attentions = self.predict_lanes(inputs)
+        result = self.predict_lanes(inputs)
         lane_detection_loss = 0
         exist_condidence_loss = 0
         nonexist_confidence_loss = 0
@@ -178,7 +179,7 @@ class Agent(nn.Module):
         disc_loss = 0
 
         # hard sampling ##################################################################
-        confidance, offset, feature = result[-1]
+        confidance, offset, feature = result
         hard_loss = 0
 
         for i in range(real_batch_size):
@@ -196,78 +197,65 @@ class Agent(nn.Module):
             node = hard_sampling.sampling_node(loss = hard_loss.cpu().data, data = data_list[i], previous_node = None, next_node = None)
             self.hard_sampling.insert(node)
         
-        for (confidance, offset, feature) in result:
-            #compute loss for point prediction
+        confidance, offset, feature = result
+        #compute loss for point prediction
 
-            #exist confidance loss##########################
-            #confidance = torch.sigmoid(confidance)
-            confidance_gt = ground_truth_point[:, 0, :, :]
-            confidance_gt = confidance_gt.view(real_batch_size, 1, self.p.grid_y, self.p.grid_x)
-            a = confidance_gt[0][confidance_gt[0]==1] - confidance[0][confidance_gt[0]==1]
-            exist_condidence_loss =  exist_condidence_loss +\
-				torch.sum( (1-confidance[confidance_gt==1])**2 )/\
-				torch.sum(confidance_gt==1)
+        #exist confidance loss##########################
+        #confidance = torch.sigmoid(confidance)
+        confidance_gt = ground_truth_point[:, 0, :, :]
+        confidance_gt = confidance_gt.view(real_batch_size, 1, self.p.grid_y, self.p.grid_x)
+        a = confidance_gt[0][confidance_gt[0]==1] - confidance[0][confidance_gt[0]==1]
+        exist_condidence_loss =  exist_condidence_loss +\
+            torch.sum( (1-confidance[confidance_gt==1])**2 )/\
+            torch.sum(confidance_gt==1)
 
-            #non exist confidance loss##########################
-            target = confidance[confidance_gt==0]
-            nonexist_confidence_loss =  nonexist_confidence_loss +\
-				torch.sum( ( target[target>0.01] )**2 )/\
-				(torch.sum(target>0.01)+1)
+        #non exist confidance loss##########################
+        target = confidance[confidance_gt==0]
+        nonexist_confidence_loss =  nonexist_confidence_loss +\
+            torch.sum( ( target[target>0.01] )**2 )/\
+            (torch.sum(target>0.01)+1)
 
-            #offset loss ##################################
-            offset_x_gt = ground_truth_point[:, 1:2, :, :]
-            offset_y_gt = ground_truth_point[:, 2:3, :, :]
+        #offset loss ##################################
+        offset_x_gt = ground_truth_point[:, 1:2, :, :]
+        offset_y_gt = ground_truth_point[:, 2:3, :, :]
 
-            predict_x = offset[:, 0:1, :, :]
-            predict_y = offset[:, 1:2, :, :]
+        predict_x = offset[:, 0:1, :, :]
+        predict_y = offset[:, 1:2, :, :]
 
-            offset_loss = offset_loss + \
-			            torch.sum( (offset_x_gt[confidance_gt==1] - predict_x[confidance_gt==1])**2 )/\
-				        torch.sum(confidance_gt==1) + \
-			            torch.sum( (offset_y_gt[confidance_gt==1] - predict_y[confidance_gt==1])**2 )/\
-				        torch.sum(confidance_gt==1)
+        offset_loss = offset_loss + \
+                    torch.sum( (offset_x_gt[confidance_gt==1] - predict_x[confidance_gt==1])**2 )/\
+                    torch.sum(confidance_gt==1) + \
+                    torch.sum( (offset_y_gt[confidance_gt==1] - predict_y[confidance_gt==1])**2 )/\
+                    torch.sum(confidance_gt==1)
 
-            #compute loss for similarity #################
-            feature_map = feature.view(real_batch_size, self.p.feature_size, 1, self.p.grid_y*self.p.grid_x)
-            feature_map = feature_map.expand(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)#.detach()
+        #compute loss for similarity #################
+        feature_map = feature.view(real_batch_size, self.p.feature_size, 1, self.p.grid_y*self.p.grid_x)
+        feature_map = feature_map.expand(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)#.detach()
 
-            point_feature = feature.view(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x,1)
-            point_feature = point_feature.expand(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)#.detach()
+        point_feature = feature.view(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x,1)
+        point_feature = point_feature.expand(real_batch_size, self.p.feature_size, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)#.detach()
 
-            distance_map = (feature_map-point_feature)**2 
-            distance_map = torch.sum( distance_map, dim=1 ).view(real_batch_size, 1, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)
+        distance_map = (feature_map-point_feature)**2 
+        distance_map = torch.sum( distance_map, dim=1 ).view(real_batch_size, 1, self.p.grid_y*self.p.grid_x, self.p.grid_y*self.p.grid_x)
 
-            # same instance
-            sisc_loss = sisc_loss+\
-				torch.sum(distance_map[ground_truth_instance==1])/\
-				torch.sum(ground_truth_instance==1)
+        # same instance
+        sisc_loss = sisc_loss+\
+            torch.sum(distance_map[ground_truth_instance==1])/\
+            torch.sum(ground_truth_instance==1)
 
-            # different instance, same class
-            count = (self.p.K1-distance_map[ground_truth_instance==2]) > 0
-            count = torch.sum(count).data
-            disc_loss = disc_loss + \
-				torch.sum((self.p.K1-distance_map[ground_truth_instance==2])[(self.p.K1-distance_map[ground_truth_instance==2]) > 0])/\
-				torch.sum(ground_truth_instance==2)
-
-        #attention loss
-        attention_loss = 0
-        source = attentions[:-1]
-        m = nn.Softmax(dim=0)
-        
-        for i in range(real_batch_size):
-            target = torch.sum((attentions[-1][i].data)**2, dim=0).view(-1) 
-            #target = target/torch.max(target)
-            target = m(target)
-            for j in source:
-                s = torch.sum(j[i]**2, dim=0).view(-1)
-                attention_loss = attention_loss + torch.sum( (m(s) - target)**2 )/(len(target)*real_batch_size)
+        # different instance, same class
+        count = (self.p.K1-distance_map[ground_truth_instance==2]) > 0
+        count = torch.sum(count).data
+        disc_loss = disc_loss + \
+            torch.sum((self.p.K1-distance_map[ground_truth_instance==2])[(self.p.K1-distance_map[ground_truth_instance==2]) > 0])/\
+            torch.sum(ground_truth_instance==2)
 
         lane_detection_loss = lane_detection_loss + self.p.constant_exist*exist_condidence_loss
         lane_detection_loss = lane_detection_loss + self.p.constant_nonexist*nonexist_confidence_loss
         lane_detection_loss = lane_detection_loss + self.p.constant_offset*offset_loss
         lane_detection_loss = lane_detection_loss + self.p.constant_alpha*sisc_loss
         lane_detection_loss = lane_detection_loss + self.p.constant_beta*disc_loss + 0.00001*torch.sum(feature**2)
-        lane_detection_loss = lane_detection_loss + self.p.constant_attention*attention_loss
+        # lane_detection_loss = lane_detection_loss + self.p.constant_attention*attention_loss
 
         print("######################################################################")
         print("seg loss")
@@ -278,9 +266,6 @@ class Agent(nn.Module):
         print("exist loss: ", exist_condidence_loss.data)
         print("non-exit loss: ", nonexist_confidence_loss.data)
         print("offset loss: ", offset_loss.data)
-
-        print("attention loss")
-        print("attention loss: ", attention_loss.data)
 
         print("--------------------------------------------------------------------")
         print("total loss: ", lane_detection_loss.data)
@@ -294,7 +279,8 @@ class Agent(nn.Module):
         del feature_map, point_feature, distance_map
         del exist_condidence_loss, nonexist_confidence_loss, offset_loss, sisc_loss, disc_loss
 
-        #trim = 180 #70+30+70 + 110
+        # trim = 180 #70+30+70 + 110
+        trim=30
         if epoch>0 and self.current_epoch != epoch:
             self.current_epoch = epoch
             if epoch == 30-trim:
@@ -348,7 +334,7 @@ class Agent(nn.Module):
     def predict_lanes_test(self, inputs):
         inputs = torch.from_numpy(inputs).float() 
         inputs = Variable(inputs).cuda()
-        outputs, features = self.lane_detection_network(inputs)
+        outputs = self.lane_detection_network(inputs)
 
         return outputs
 

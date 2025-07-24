@@ -6,7 +6,7 @@
 
 import cv2
 import torch
-import visdom
+# import visdom
 #import sys
 #sys.path.append('/home/kym/research/autonomous_car_vision/lanedection/code/')
 import agent
@@ -17,7 +17,7 @@ import test
 import evaluation
 import util
 import copy
-
+from logger import MLflowLogger
 p = Parameters()
 
 ###############################################################
@@ -33,14 +33,15 @@ def Training():
     ####################################################################
     print('Initializing hyper parameter')
 
-    vis = visdom.Visdom()
-    loss_window = vis.line(X=torch.zeros((1,)).cpu(),
-                           Y=torch.zeros((1)).cpu(),
-                           opts=dict(xlabel='epoch',
-                                     ylabel='Loss',
-                                     title='Training Loss',
-                                     legend=['Loss']))
-    
+    # vis = visdom.Visdom()
+    # loss_window = vis.line(X=torch.zeros((1,)).cpu(),
+    #                        Y=torch.zeros((1)).cpu(),
+    #                        opts=dict(xlabel='epoch',
+    #                                  ylabel='Loss',
+    #                                  title='Training Loss',
+    #                                  legend=['Loss']))
+    mlflow_logger = MLflowLogger(run_name="PINet_Training", autostart=True)
+    mlflow_logger.start_run()
     #########################################################################
     ## Get dataset
     #########################################################################
@@ -55,7 +56,7 @@ def Training():
         lane_agent = agent.Agent()
     else:
         lane_agent = agent.Agent()
-        lane_agent.load_weights(1912, "tensor(0.9420)")
+        # lane_agent.load_weights(1912, "tensor(0.9420)")
 
     ##############################
     ## Check GPU
@@ -71,8 +72,10 @@ def Training():
     print('Training loop')
     step = 0
     sampling_list = None
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(p.n_epoch):
         lane_agent.training_mode()
+        
         for inputs, target_lanes, target_h, test_image, data_list in loader.Generate(sampling_list):
             #training
             #util.visualize_points(inputs[0], target_lanes[0], target_h[0])
@@ -82,16 +85,13 @@ def Training():
             torch.cuda.synchronize()
             loss_p = loss_p.cpu().data
             
-            if step%50 == 0:
-                vis.line(
-                    X=torch.ones((1, 1)).cpu() * int(step/50),
-                    Y=torch.Tensor([loss_p]).unsqueeze(0).cpu(),
-                    win=loss_window,
-                    update='append')
+            # if step%50 == 0:
+            #     mlflow_logger.log_metric("loss", loss_p.item(), step=step)
                 
-            if step%100 == 0:
-                lane_agent.save_model(int(step/100), loss_p)
-                testing(lane_agent, test_image, step, loss_p)
+            if step%200 == 0:
+                mlflow_logger.log_metric("loss", loss_p.item(), step=step)
+                # lane_agent.save_model(int(step/100), loss_p)
+                testing(lane_agent, test_image, step, loss_p, mlflow_logger)
             step += 1
 
         sampling_list = copy.deepcopy(lane_agent.get_data_list())
@@ -103,32 +103,33 @@ def Training():
             lane_agent.evaluate_mode()
             th_list = [0.8]
             index = [3]
-            lane_agent.save_model(int(step/100), loss_p)
+            # lane_agent.save_model(int(step/100), loss_p)
+            mlflow_logger.log_model_state_dict(epoch, lane_agent.lane_detection_network, filename=f"model_epoch_{epoch}.pth", artifact_path="models")
+            # for idx in index:
+            #     print("generate result")
+            #     test.evaluation(loader, lane_agent, index = idx, name="test_result_"+str(epoch)+"_"+str(idx)+".json")
 
-            for idx in index:
-                print("generate result")
-                test.evaluation(loader, lane_agent, index = idx, name="test_result_"+str(epoch)+"_"+str(idx)+".json")
-
-            for idx in index:
-                print("compute score")
-                with open("/home/kym/Dropbox/eval_result2_"+str(idx)+"_.txt", 'a') as make_file:
-                    make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
-                    make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
-                    make_file.write("\n")
-                with open("eval_result_"+str(idx)+"_.txt", 'a') as make_file:
-                    make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
-                    make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
-                    make_file.write("\n")
+            # for idx in index:
+            #     print("compute score")
+            #     with open("/home/kym/Dropbox/eval_result2_"+str(idx)+"_.txt", 'a') as make_file:
+            #         make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
+            #         make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
+            #         make_file.write("\n")
+            #     with open("eval_result_"+str(idx)+"_.txt", 'a') as make_file:
+            #         make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
+            #         make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
+            #         make_file.write("\n")
 
         if int(step)>700000:
             break
+    mlflow_logger.end_run()
 
-def testing(lane_agent, test_image, step, loss):
+def testing(lane_agent, test_image, step, loss, logger):
     lane_agent.evaluate_mode()
 
     _, _, ti = test.test(lane_agent, np.array([test_image]))
-
-    cv2.imwrite('test_result/result_'+str(step)+'_'+str(loss)+'.png', ti[0])
+    logger.log_image(f"test_image_{step}", ti[0], step=step)
+    # cv2.imwrite('test_result/result_'+str(step)+'_'+str(loss)+'.png', ti[0])
 
     lane_agent.training_mode()
 

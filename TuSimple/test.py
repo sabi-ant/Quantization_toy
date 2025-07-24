@@ -119,10 +119,10 @@ def evaluation(loader, lane_agent, index= -1, thresh = p.threshold_point, name =
 
         progressbar.update(1)
     progressbar.close()
-    if name == None:
-        save_result(result_data, "test_result.json")
-    else:
-        save_result(result_data, name)
+    # if name == None:
+    #     save_result(result_data, "test_result.json")
+    # else:
+    #     save_result(result_data, name)
 
 ############################################################################
 ## linear interpolation for fixed y value on the test dataset, if you want to use python2, use this code
@@ -268,7 +268,7 @@ def test(lane_agent, test_images, thresh = p.threshold_point, index= -1):
 
     result = lane_agent.predict_lanes_test(test_images)
     torch.cuda.synchronize()
-    confidences, offsets, instances = result[index]
+    confidences, offsets, instances = result
     
     num_batch = len(test_images)
 
