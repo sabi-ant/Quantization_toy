@@ -270,7 +270,7 @@ def test(lane_agent, test_images, thresh = p.threshold_point, index= -1):
     torch.cuda.synchronize()
     confidences, offsets, instances = result
     
-    num_batch = len(test_images)
+    num_batch = test_images.shape[0]
 
     out_x = []
     out_y = []
@@ -279,6 +279,7 @@ def test(lane_agent, test_images, thresh = p.threshold_point, index= -1):
     for i in range(num_batch):
         # test on test data set
         image = deepcopy(test_images[i])
+        image = image.cpu().numpy().copy()
         image = np.rollaxis(image, axis=2, start=0)
         image = np.rollaxis(image, axis=2, start=0)*255.0
         image = image.astype(np.uint8).copy()
