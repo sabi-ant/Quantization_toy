@@ -4,14 +4,13 @@
 ##
 #############################################################################################################
 
-import os
 import cv2
 import torch
 # import visdom
 #import sys
 #sys.path.append('/home/kym/research/autonomous_car_vision/lanedection/code/')
-# import agent
-import agent_refactoring as agent
+import agent
+# import agent_refactoring as agent
 import numpy as np
 from data_loader import Generator
 from parameters import Parameters
@@ -22,8 +21,6 @@ import copy
 from logger import MLflowLogger
 from torch.utils.data import DataLoader
 from torch_dataloader import TuSimpleDataset
-import torch.ao.quantization.quantize_fx as quantize_fx
-import datetime
 p = Parameters()
 
 ###############################################################
@@ -39,19 +36,22 @@ def Training():
     ####################################################################
     print('Initializing hyper parameter')
 
+    # vis = visdom.Visdom()
+    # loss_window = vis.line(X=torch.zeros((1,)).cpu(),
+    #                        Y=torch.zeros((1)).cpu(),
+    #                        opts=dict(xlabel='epoch',
+    #                                  ylabel='Loss',
+    #                                  title='Training Loss',
+    #                                  legend=['Loss']))
     mlflow_logger = MLflowLogger(run_name="PINet_Training", autostart=True)
     mlflow_logger.start_run()
-
     #########################################################################
     ## Get dataset
     #########################################################################
     print("Get dataset")
-    # train_loader = Generator()
-    train_dataset = TuSimpleDataset(mode='train')
-    test_dataset = TuSimpleDataset(mode='test')
-    train_loader = DataLoader(train_dataset, batch_size=p.batch_size, shuffle=True, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=p.batch_size, shuffle=True, num_workers=4)
-
+    loader = Generator()
+    # train_dataset = TuSimpleDataset()
+    # loader = DataLoader(train_dataset, batch_size=p.batch_size, shuffle=True, num_workers=4)
     ##############################
     ## Get agent and model
     ##############################
@@ -60,6 +60,7 @@ def Training():
         lane_agent = agent.Agent()
     else:
         lane_agent = agent.Agent()
+        # lane_agent.load_weights(1912, "tensor(0.9420)")
 
     ##############################
     ## Check GPU
@@ -76,38 +77,29 @@ def Training():
     step = 0
     sampling_list = None
     torch.autograd.set_detect_anomaly(True)
-    test_data_iterator = iter(test_loader)
     for epoch in range(p.n_epoch):
         lane_agent.training_mode()
         # ground_truth_point, ground_binary, ground_truth_instance
-        # for inputs, target_lanes, target_h, test_image, data_list in train_loader.Generate(sampling_list):
-        for inputs, gt_point, gt_bin, gt_inst, gt_texture in train_loader:
+        for inputs, target_lanes, target_h, test_image, data_list in loader.Generate(sampling_list):
+        # for inputs, target_lanes, target_h, test_image, data_list, gt_point, gt_bin, gt_inst in loader:
+            #training
+            #util.visualize_points(inputs[0], target_lanes[0], target_h[0])
             print("epoch : " + str(epoch))
             print("step : " + str(step))
-            loss_p, attr_loss, lane_existance_loss = lane_agent.train(inputs.float().cuda(), 
-                                      epoch, 
-                                      gt_point.float().cuda(),
-                                      gt_bin.long().cuda(), 
-                                      gt_inst.float().cuda(), 
-                                      gt_texture.long().cuda())
+            loss_p = lane_agent.train(inputs, target_lanes, target_h, epoch, lane_agent, data_list)
             torch.cuda.synchronize()
             loss_p = loss_p.cpu().data
             
-            if step%50 == 0:
+            # if step%50 == 0:
+            #     mlflow_logger.log_metric("loss", loss_p.item(), step=step)
                 
+            if step%200 == 0:
                 mlflow_logger.log_metric("loss", loss_p.item(), step=step)
-                mlflow_logger.log_metric("attribute_loss", attr_loss.item(), step=step)
-                mlflow_logger.log_metric("lane_existance_loss", lane_existance_loss.item(), step=step)
-                
                 # lane_agent.save_model(int(step/100), loss_p)
-                try:
-                    test_image = next(test_data_iterator)
-                except StopIteration:
-                    test_data_iterator = iter(test_loader) # reset
-                    test_image = next(test_data_iterator)
-                testing(lane_agent, test_image.float().cuda(), step, loss_p, mlflow_logger)
+                testing(lane_agent, test_image, step, loss_p, mlflow_logger)
             step += 1
-        
+
+        sampling_list = copy.deepcopy(lane_agent.get_data_list())
         lane_agent.sample_reset()
 
         #evaluation
@@ -116,36 +108,31 @@ def Training():
             lane_agent.evaluate_mode()
             th_list = [0.8]
             index = [3]
-            mlflow_logger.log_latest_state_dict(lane_agent.lane_detection_network, filename="latest_model.pth", artifact_path="latest_model")
+            # lane_agent.save_model(int(step/100), loss_p)
             mlflow_logger.log_model_state_dict(epoch, lane_agent.lane_detection_network, filename=f"model_epoch_{epoch}.pth", artifact_path="models")
+            # for idx in index:
+            #     print("generate result")
+            #     test.evaluation(loader, lane_agent, index = idx, name="test_result_"+str(epoch)+"_"+str(idx)+".json")
+
+            # for idx in index:
+            #     print("compute score")
+            #     with open("/home/kym/Dropbox/eval_result2_"+str(idx)+"_.txt", 'a') as make_file:
+            #         make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
+            #         make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
+            #         make_file.write("\n")
+            #     with open("eval_result_"+str(idx)+"_.txt", 'a') as make_file:
+            #         make_file.write( "epoch : " + str(epoch) + " loss : " + str(loss_p.cpu().data) )
+            #         make_file.write(evaluation.LaneEval.bench_one_submit("test_result_"+str(epoch)+"_"+str(idx)+".json", "test_label.json"))
+            #         make_file.write("\n")
+
         if int(step)>700000:
             break
-    if p.qat:
-        test_data_iterator = iter(test_loader) # reset
-        test_image = next(test_data_iterator)
-        lane_agent.evaluate_mode()
-        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        dir_name = f'{now_str}_qat'
-        os.makedirs(dir_name, exist_ok=True)
-        lane_agent.lane_detection_network.cpu()
-        quantized_model = quantize_fx.convert_fx(lane_agent.lane_detection_network)
-        output_name_list = ['conf', 'offset', 'embed', 'attr']
-        torch.onnx.export(quantized_model, 
-                          (torch.randn(1, 3, 256, 512),), 
-                          f"{dir_name}/onnx_quantized_model.onnx", 
-                          input_names=['input'], 
-                          output_names=output_name_list,
-                          do_constant_folding= True,
-                          opset_version=17
-                          )
-        
     mlflow_logger.end_run()
 
 def testing(lane_agent, test_image, step, loss, logger):
     lane_agent.evaluate_mode()
 
-    _, _, ti = test.test(lane_agent, test_image)
+    _, _, ti = test.test(lane_agent, np.array([test_image]))
     logger.log_image(f"test_image_{step}", ti[0], step=step)
     # cv2.imwrite('test_result/result_'+str(step)+'_'+str(loss)+'.png', ti[0])
 

@@ -15,7 +15,7 @@ from toy_model.light_toy_model import CustomSeg as lane_detection_network
 from torch.autograd import Function as F
 from parameters import Parameters
 import math
-import util
+import util_org as util
 import hard_sampling
 
 ############################################################
@@ -179,7 +179,7 @@ class Agent(nn.Module):
         disc_loss = 0
 
         # hard sampling ##################################################################
-        confidance, offset, feature = result
+        confidance, offset, feature, attr = result
         hard_loss = 0
 
         for i in range(real_batch_size):
@@ -197,7 +197,7 @@ class Agent(nn.Module):
             node = hard_sampling.sampling_node(loss = hard_loss.cpu().data, data = data_list[i], previous_node = None, next_node = None)
             self.hard_sampling.insert(node)
         
-        confidance, offset, feature = result
+        confidance, offset, feature, attr = result
         #compute loss for point prediction
 
         #exist confidance loss##########################

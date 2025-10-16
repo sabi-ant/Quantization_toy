@@ -194,14 +194,19 @@ def sort_along_x(x, y):
     return out_x, out_y
 
 def sort_batch_along_y(target_lanes, target_h):
-    
-    temp_x = []
-    temp_y = []
-    for x, y in zip(target_lanes, target_h):
-        ind = np.argsort(y, axis=0)
-        sorted_x = np.take_along_axis(x, ind[::-1], axis=0)
-        sorted_y = np.take_along_axis(y, ind[::-1], axis=0)
-        temp_x.append(sorted_x)
-        temp_y.append(sorted_y)
+    out_x = []
+    out_y = []
 
-    return temp_x, temp_y
+    for x_batch, y_batch in zip(target_lanes, target_h):
+        temp_x = []
+        temp_y = []
+        for x, y, in zip(x_batch, y_batch):
+            ind = np.argsort(y, axis=0)
+            sorted_x = np.take_along_axis(x, ind[::-1], axis=0)
+            sorted_y = np.take_along_axis(y, ind[::-1], axis=0)
+            temp_x.append(sorted_x)
+            temp_y.append(sorted_y)
+        out_x.append(temp_x)
+        out_y.append(temp_y)
+    
+    return out_x, out_y

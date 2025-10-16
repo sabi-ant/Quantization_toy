@@ -268,7 +268,7 @@ def test(lane_agent, test_images, thresh = p.threshold_point, index= -1):
 
     result = lane_agent.predict_lanes_test(test_images)
     torch.cuda.synchronize()
-    confidences, offsets, instances = result
+    confidences, offsets, instances, attr_out = result
     
     num_batch = test_images.shape[0]
 

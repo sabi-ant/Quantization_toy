@@ -5,7 +5,7 @@ class MLflowLogger:
     def __init__(self, run_name: str = None, autostart: bool = True):
         self.run_name = run_name
         self.run = None
-        self.save_chk_at =[30, 70, 100]
+        self.save_chk_at =[49]
         if autostart:
             self.start_run()
 
@@ -34,6 +34,13 @@ class MLflowLogger:
 
     def log_image(self, name: str, image: Union[str, bytes], step: int = None):
         mlflow.log_image(image, key=name, step=step)
+    
+    def log_latest_state_dict(self, model, filename: str = "latest_model.pth", artifact_path: str = 'latest_model'):
+        """
+        Save the latest state_dict of the model and log it as an artifact.
+        """
+        torch.save(model.state_dict(), filename)
+        mlflow.log_artifact(filename, artifact_path=artifact_path)
 
     def log_model_state_dict(self, epoch, model, filename: str = "model.pth", artifact_path: str = None):
         """

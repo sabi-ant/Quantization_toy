@@ -6,8 +6,9 @@
 import numpy as np
 
 class Parameters():
-    n_epoch = 100
-    l_rate = 0.00001
+    qat=True
+    n_epoch = 50
+    l_rate = 0.000001 #0.00001 <- org
     weight_decay=1e-5
     save_path = "savefile/"
     model_path = "savefile/"

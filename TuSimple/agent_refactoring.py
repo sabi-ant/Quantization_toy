@@ -12,11 +12,19 @@ import numpy as np
 from torch.autograd import Variable
 # from hourglass_network import lane_detection_network
 from toy_model.light_toy_model import CustomSeg as lane_detection_network
-from torch.autograd import Function as F
+# from torch.autograd import Function as F
+import torch.nn.functional as F
 from parameters import Parameters
 import math
 import util
 import hard_sampling
+import torch
+from torch.ao.quantization import (
+  get_default_qconfig_mapping,
+  get_default_qat_qconfig_mapping,
+  QConfigMapping,
+)
+import torch.ao.quantization.quantize_fx as quantize_fx
 
 ############################################################
 ##
@@ -34,6 +42,12 @@ class Agent(nn.Module):
         self.p = Parameters()
 
         self.lane_detection_network = lane_detection_network()
+        if self.p.qat:
+            print("Quantization aware training mode")
+            self.lane_detection_network.train()
+            qconfig_mapping = get_default_qat_qconfig_mapping("qnnpack")
+            self.lane_detection_network = quantize_fx.prepare_qat_fx(self.lane_detection_network, qconfig_mapping, torch.randn(1, 3, 256, 512))
+
 
         self.setup_optimizer()
 
@@ -57,33 +71,19 @@ class Agent(nn.Module):
     #####################################################
     ## train
     #####################################################
-    def train(self, inputs, epoch, gt_point, gt_bin, gt_inst):
-        point_loss = self.train_point(inputs, epoch, gt_point, gt_bin, gt_inst)
+    def train(self, inputs, epoch, gt_point, gt_bin, gt_inst, gt_texture):
+        point_loss = self.train_point(inputs, epoch, gt_point, gt_bin, gt_inst, gt_texture)
         return point_loss
 
     #####################################################
     ## compute loss function and optimize
     #####################################################
-    def train_point(self, inputs, epoch, ground_truth_point, ground_binary, ground_truth_instance):
+    def train_point(self, inputs, epoch, 
+                    ground_truth_point, 
+                    ground_binary, 
+                    ground_truth_instance,
+                    gt_texture):
         real_batch_size = inputs.shape[0] #len(target_lanes)
-
-        #generate ground truth
-        # ground_truth_point, ground_binary = self.make_ground_truth_point(target_lanes, target_h)
-        # ground_truth_instance = self.make_ground_truth_instance(target_lanes, target_h)
-
-        # convert numpy array to torch tensor
-        # ground_truth_point = torch.from_numpy(ground_truth_point).float()
-        # ground_truth_point = Variable(ground_truth_point).cuda()
-        # ground_truth_point.requires_grad=False
-
-        # ground_binary = torch.LongTensor(ground_binary.tolist()).cuda()
-        # ground_binary.requires_grad=False
-
-        # ground_truth_instance = torch.from_numpy(ground_truth_instance).float()
-        # ground_truth_instance = Variable(ground_truth_instance).cuda()
-        # ground_truth_instance.requires_grad=False
-
-        #util.visualize_gt(ground_truth_point[0], ground_truth_instance[0], inputs[0])
 
         # update lane_detection_network
         result = self.predict_lanes(inputs)
@@ -91,31 +91,25 @@ class Agent(nn.Module):
         exist_condidence_loss = 0
         nonexist_confidence_loss = 0
         offset_loss = 0
-        x_offset_loss = 0
-        y_offset_loss = 0
         sisc_loss = 0
         disc_loss = 0
-
-        # hard sampling ##################################################################
-        # confidance, offset, feature = result
-        # hard_loss = 0
-
-        # for i in range(real_batch_size):
-        #     confidance_gt = ground_truth_point[i, 0, :, :]
-        #     confidance_gt = confidance_gt.view(1, self.p.grid_y, self.p.grid_x)
-        #     hard_loss =  hard_loss +\
-        #         torch.sum( (1-confidance[i][confidance_gt==1])**2 )/\
-        #         (torch.sum(confidance_gt==1)+1)
-
-        #     target = confidance[i][confidance_gt==0]
-        #     hard_loss =  hard_loss +\
-		# 		torch.sum( ( target[target>0.01] )**2 )/\
-		# 		(torch.sum(target>0.01)+1)
-
-            # node = hard_sampling.sampling_node(loss = hard_loss.cpu().data, data = data_list[i], previous_node = None, next_node = None)
-            # self.hard_sampling.insert(node)
         
-        confidance, offset, feature = result
+        confidance, offset, feature, attribute = result
+        # attribute loss
+        if 1:
+            logits = attribute[:,:,:1].squeeze(-1)  # (batch, 5)
+            lane_existance_gt = gt_texture[:,0,:].float()              # (batch, 5)
+            lane_existance_loss = F.binary_cross_entropy_with_logits(logits, lane_existance_gt, reduction='mean')
+            
+            attr_loss = self.focal_loss(attribute[:,:,1:], gt_texture[:,1,:], alpha=0.25, gamma=2.0, reduction='mean', ignore_index=30)
+            lane_detection_loss += lane_existance_loss
+            lane_detection_loss += attr_loss
+        else:
+            logits = attribute[:,:,:1].squeeze(-1)  # (batch, 5)
+            lane_existance_gt = gt_texture[:,0,:].float()              # (batch, 5)
+            lane_existance_loss = F.binary_cross_entropy_with_logits(logits, lane_existance_gt, reduction='mean')
+            attr_loss =0
+
         #compute loss for point prediction
 
         #exist confidance loss##########################
@@ -198,45 +192,83 @@ class Agent(nn.Module):
         del exist_condidence_loss, nonexist_confidence_loss, offset_loss, sisc_loss, disc_loss
 
         # trim = 180 #70+30+70 + 110
-        trim=30
-        if epoch>0 and self.current_epoch != epoch:
-            self.current_epoch = epoch
-            if epoch == 30-trim:
-                self.p.l_rate = 0.0005
-                self.setup_optimizer()
-            elif epoch == 60-trim:
-                self.p.l_rate = 0.0002
-                self.setup_optimizer()
-            elif epoch == 90-trim:
-                self.p.l_rate = 0.0001
-                self.setup_optimizer()
-            elif epoch == 100-trim:
-                self.p.l_rate = 0.00005
-                self.setup_optimizer()
-            elif epoch == 110-trim:
-                self.p.l_rate = 0.00002
-                self.setup_optimizer()
-            elif epoch == 180-trim:
-                self.p.l_rate = 0.00001
-                self.setup_optimizer()
-            elif epoch == 200-trim:
-                self.p.l_rate = 0.000005
-                self.setup_optimizer()
-            elif epoch == 230-trim:
-                self.p.l_rate = 0.000001
-                self.setup_optimizer()           
-            elif epoch == 260-trim:
-                self.p.l_rate = 0.0000005
-                self.setup_optimizer()  
-            elif epoch == 290-trim:
-                self.p.l_rate = 0.0000001
-                self.setup_optimizer()  
-            elif epoch == 350-trim:
-                self.p.l_rate = 0.00000001
-                self.setup_optimizer()    
+        if not self.p.qat:
+            trim=50
+            if epoch>0 and self.current_epoch != epoch:
+                self.current_epoch = epoch
+                if 0:
+                    if epoch == 30-trim:
+                        self.p.l_rate = 0.0005
+                        self.setup_optimizer()
+                    elif epoch == 60-trim:
+                        self.p.l_rate = 0.0002
+                        self.setup_optimizer()
+                    elif epoch == 90-trim:
+                        self.p.l_rate = 0.0001
+                        self.setup_optimizer()
+                    elif epoch == 100-trim:
+                        self.p.l_rate = 0.00005
+                        self.setup_optimizer()
+                    elif epoch == 110-trim:
+                        self.p.l_rate = 0.00002
+                        self.setup_optimizer()
+                    elif epoch == 160-trim:
+                        self.p.l_rate = 0.00001
+                        self.setup_optimizer()
+                    elif epoch == 190-trim:
+                        self.p.l_rate = 0.000005
+                        self.setup_optimizer()
+                    elif epoch == 220-trim:
+                        self.p.l_rate = 0.000001
+                        self.setup_optimizer()           
+                    elif epoch == 250-trim:
+                        self.p.l_rate = 0.0000005
+                        self.setup_optimizer()  
+                    elif epoch == 280-trim:
+                        self.p.l_rate = 0.0000001
+                        self.setup_optimizer()  
+                    elif epoch == 330-trim:
+                        self.p.l_rate = 0.00000001
+                        self.setup_optimizer()    
+                else:
+                    if epoch == 50-trim:
+                        self.p.l_rate = 0.000001
+                        self.setup_optimizer()
+               
 
-        return lane_detection_loss
+        return lane_detection_loss, attr_loss, lane_existance_loss
+    
+    def focal_loss(self, logits, gt, alpha=0.25, gamma=2.0, reduction='mean', ignore_index=30):
+        """
+        logits: (batch, 7, 5)
+        gt: (batch, 5) long, 값 0~6, 30(ignore)
+        """
+        # (batch, 7, 5) -> (batch, 5, 7)
+        # logits = logits.permute(0, 2, 1)  # (batch, 5, 7)
+        gt = gt.long()  # (batch, 5)
+        batch, num_pos = gt.shape
 
+        # Flatten for easier indexing
+        logits = logits.reshape(-1, logits.size(-1))  # (batch*5, 7)
+        gt = gt.reshape(-1)  # (batch*5,)
+
+        # Ignore mask
+        valid_mask = (gt != ignore_index)
+        logits = logits[valid_mask]
+        gt = gt[valid_mask]
+        if logits.numel() == 0:
+            return logits.sum()*0
+
+        ce_loss = F.cross_entropy(logits, gt, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal = alpha * (1 - pt) ** gamma * ce_loss
+
+        if reduction == 'mean':
+            return focal.mean()
+        elif reduction == 'sum':
+            return focal.sum()
+        else:
+            return focal
     #####################################################
     ## predict lanes
     #####################################################
